@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Botibot MQTT Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <style>
+        .dashboard-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 0;
+        }
+        .status-card {
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+            margin-bottom: 20px;
+        }
+        .status-card:hover {
+            transform: translateY(-5px);
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 30px;
+        }
+        .control-panel {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .sensor-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .sensor-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        .servo-control {
+            margin: 10px 0;
+        }
+        .timestamp {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-header">
+        <div class="container">
+            <h1 class="text-center">
+                <i class="fas fa-robot"></i> Botibot MQTT Control Dashboard
+            </h1>
+            <p class="text-center mb-0">Pure MQTT communication between Raspberry Pi and ESP32</p>
+            <div class="text-center mt-2">
+                <span class="badge bg-info" id="connection-status">
+                    <i class="fas fa-wifi"></i> Connecting...
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container mt-4">
+        <!-- Status Cards Row -->
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card status-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-thermometer-half fa-2x text-danger mb-2"></i>
+                        <div class="sensor-value text-danger" id="temp-value">--</div>
+                        <div class="sensor-label">Temperature (°C)</div>
+                        <div class="timestamp" id="temp-time">--</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card status-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-ruler fa-2x text-info mb-2"></i>
+                        <div class="sensor-value text-info" id="distance-value">--</div>
+                        <div class="sensor-label">Distance (cm)</div>
+                        <div class="timestamp" id="distance-time">--</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card status-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-weight fa-2x text-warning mb-2"></i>
+                        <div class="sensor-value text-warning" id="weight-value">--</div>
+                        <div class="sensor-label">Weight (kg)</div>
+                        <div class="timestamp" id="weight-time">--</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card status-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-heartbeat fa-2x text-success mb-2"></i>
+                        <div class="sensor-value text-success" id="bpm-value">--</div>
+                        <div class="sensor-label">Heart Rate (BPM)</div>
+                        <div class="timestamp" id="bpm-time">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="control-panel">
+                    <h5><i class="fas fa-cog"></i> Servo Control</h5>
+                    <div class="servo-control">
+                        <label for="servo-slider" class="form-label">Servo Angle: <span id="servo-angle">90</span>°</label>
+                        <input type="range" class="form-range" min="0" max="180" value="90" id="servo-slider">
+                        <button class="btn btn-primary btn-sm mt-2" onclick="setServo()">
+                            <i class="fas fa-paper-plane"></i> Set Servo
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="control-panel">
+                    <h5><i class="fas fa-step-forward"></i> Stepper Control</h5>
+                    <div class="row">
+                        <div class="col-6">
+                            <input type="number" class="form-control" id="stepper-steps" placeholder="Steps" value="100">
+                        </div>
+                        <div class="col-6">
+                            <select class="form-select" id="stepper-direction">
+                                <option value="CW">Clockwise</option>
+                                <option value="CCW">Counter-clockwise</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-success btn-sm mt-2" onclick="moveStepper()">
+                        <i class="fas fa-play"></i> Move Stepper
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line"></i> Gyroscope Data</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="gyroChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-area"></i> Accelerometer Data</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="accelChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-wine"></i> Alcohol Level</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="alcoholChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-weight-hanging"></i> Load Cell Data</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="loadChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Chart.js setup
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        displayFormats: {
+                            second: 'HH:mm:ss',
+                            minute: 'HH:mm',
+                            hour: 'HH:mm'
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Value'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true
+                }
+            },
+            animation: {
+                duration: 0
+            }
+        };
+
+        // Initialize charts
+        const gyroChart = new Chart(document.getElementById('gyroChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'X', data: [], borderColor: 'rgb(255, 99, 132)', tension: 0.1 },
+                    { label: 'Y', data: [], borderColor: 'rgb(54, 162, 235)', tension: 0.1 },
+                    { label: 'Z', data: [], borderColor: 'rgb(255, 205, 86)', tension: 0.1 }
+                ]
+            },
+            options: chartOptions
+        });
+
+        const accelChart = new Chart(document.getElementById('accelChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'X', data: [], borderColor: 'rgb(75, 192, 192)', tension: 0.1 },
+                    { label: 'Y', data: [], borderColor: 'rgb(153, 102, 255)', tension: 0.1 },
+                    { label: 'Z', data: [], borderColor: 'rgb(255, 159, 64)', tension: 0.1 }
+                ]
+            },
+            options: chartOptions
+        });
+
+        const alcoholChart = new Chart(document.getElementById('alcoholChart'), {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Alcohol Level',
+                    data: [],
+                    borderColor: 'rgb(255, 99, 132)',
+                    tension: 0.1
+                }]
+            },
+            options: chartOptions
+        });
+
+        const loadChart = new Chart(document.getElementById('loadChart'), {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Load (kg)',
+                    data: [],
+                    borderColor: 'rgb(54, 162, 235)',
+                    tension: 0.1
+                }]
+            },
+            options: chartOptions
+        });
+
+        // Servo slider update
+        document.getElementById('servo-slider').oninput = function() {
+            document.getElementById('servo-angle').textContent = this.value;
+        };
+
+        // Control functions
+        function setServo() {
+            const angle = document.getElementById('servo-slider').value;
+            fetch('/api/control/servo', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ angle: parseInt(angle) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showNotification('Servo command sent successfully!', 'success');
+                } else {
+                    showNotification('Error: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('Network error: ' + error, 'error');
+            });
+        }
+
+        function moveStepper() {
+            const steps = document.getElementById('stepper-steps').value;
+            const direction = document.getElementById('stepper-direction').value;
+            
+            fetch('/api/control/stepper', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    steps: parseInt(steps), 
+                    direction: direction 
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showNotification('Stepper command sent successfully!', 'success');
+                } else {
+                    showNotification('Error: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('Network error: ' + error, 'error');
+            });
+        }
+
+        function showNotification(message, type) {
+            // Simple notification system
+            const notification = document.createElement('div');
+            notification.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show position-fixed`;
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.zIndex = '1050';
+            notification.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        // Data fetching and updating functions
+        function fetchSensorData() {
+            fetch('/api/sensor-data')
+                .then(response => response.json())
+                .then(data => {
+                    updateDashboard(data);
+                })
+                .catch(error => {
+                    console.error('Error fetching sensor data:', error);
+                });
+        }
+
+        function checkMqttStatus() {
+            fetch('/api/mqtt-status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusElement = document.getElementById('connection-status');
+                    if (data.connected) {
+                        statusElement.innerHTML = `<i class="fas fa-wifi"></i> MQTT Connected: ${data.broker}:${data.port}`;
+                        statusElement.className = 'badge bg-success';
+                    } else {
+                        statusElement.innerHTML = `<i class="fas fa-wifi"></i> MQTT Disconnected: ${data.broker}:${data.port}`;
+                        statusElement.className = 'badge bg-danger';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking MQTT status:', error);
+                    const statusElement = document.getElementById('connection-status');
+                    statusElement.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Status Unknown';
+                    statusElement.className = 'badge bg-warning';
+                });
+        }
+
+        function updateDashboard(sensorData) {
+            console.log('Received sensor data:', sensorData); // Debug log
+            console.log('Temperature data specifically:', sensorData.temp); // Debug log
+            
+            // Update status cards
+            updateStatusCard('temp', sensorData.temp);
+            updateStatusCard('distance', sensorData.distance);
+            updateStatusCard('weight', sensorData.weight_value);
+            updateStatusCard('bpm', sensorData.bpm);
+            
+            // Update charts
+            updateChart(gyroChart, sensorData.gyro, ['x', 'y', 'z']);
+            updateChart(accelChart, sensorData.accel, ['x', 'y', 'z']);
+            updateSingleChart(alcoholChart, sensorData.alcohol);
+            updateSingleChart(loadChart, sensorData.load);
+        }
+
+        function updateStatusCard(elementId, data, prefix = '') {
+            console.log(`Updating ${elementId} with data:`, data); // Debug log
+            if (data && data.value !== undefined) {
+                const valueElement = document.getElementById(`${elementId}-value`);
+                const timeElement = document.getElementById(`${elementId}-time`);
+                
+                console.log(`Found elements for ${elementId}:`, valueElement, timeElement); // Debug log
+                
+                if (valueElement && timeElement) {
+                    valueElement.textContent = data.value.toFixed(2);
+                    timeElement.textContent = new Date(data.timestamp).toLocaleTimeString();
+                    console.log(`Updated ${elementId} with value: ${data.value}`); // Debug log
+                } else {
+                    console.warn(`Elements not found for ${elementId}: ${elementId}-value or ${elementId}-time`);
+                }
+            } else {
+                console.warn(`No valid data for ${elementId}:`, data);
+            }
+        }
+
+        function updateChart(chart, data, axes) {
+            if (data && data.timestamp) {
+                const timestamp = new Date(data.timestamp);
+                
+                axes.forEach((axis, index) => {
+                    if (data[axis] !== undefined) {
+                        chart.data.datasets[index].data.push({
+                            x: timestamp,
+                            y: data[axis]
+                        });
+                        
+                        // Keep only last 50 points
+                        if (chart.data.datasets[index].data.length > 50) {
+                            chart.data.datasets[index].data.shift();
+                        }
+                    }
+                });
+                
+                chart.update('none');
+            }
+        }
+
+        function updateSingleChart(chart, data) {
+            if (data && data.value !== undefined && data.timestamp) {
+                const timestamp = new Date(data.timestamp);
+                
+                chart.data.datasets[0].data.push({
+                    x: timestamp,
+                    y: data.value
+                });
+                
+                // Keep only last 50 points
+                if (chart.data.datasets[0].data.length > 50) {
+                    chart.data.datasets[0].data.shift();
+                }
+                
+                chart.update('none');
+            }
+        }
+
+        // Start polling for data every 1 second
+        setInterval(fetchSensorData, 1000);
+        
+        // Check MQTT status every 5 seconds
+        setInterval(checkMqttStatus, 5000);
+        
+        // Initial data load
+        fetchSensorData();
+        checkMqttStatus();
+        
+        console.log('Botibot Dashboard initialized - Using pure MQTT communication');
+        console.log('No Socket.IO dependencies - All communication via HTTP polling and MQTT');
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

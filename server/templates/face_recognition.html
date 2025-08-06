@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BotiBot - Face Recognition Authentication</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+        }
+
+        .auth-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .auth-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .camera-preview {
+            width: 320px;
+            height: 240px;
+            border-radius: 15px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            background: rgba(0, 0, 0, 0.3);
+            margin: 20px auto;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .camera-preview.scanning {
+            border-color: #ffd700;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+            animation: pulse 1.5s infinite;
+        }
+
+        .camera-preview.success {
+            border-color: #4CAF50;
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.5);
+        }
+
+        .camera-preview.error {
+            border-color: #F44336;
+            box-shadow: 0 0 20px rgba(244, 67, 54, 0.5);
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .camera-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
+        .camera-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
+        .camera-icon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 60px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .status-message {
+            margin: 20px 0;
+            font-size: 16px;
+            min-height: 24px;
+            font-weight: 500;
+        }
+
+        .verify-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .verify-btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .verify-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .verify-btn.success {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+
+        .verify-btn.scanning {
+            background: rgba(255, 215, 0, 0.8);
+            border-color: #ffd700;
+            color: #333;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+            margin-bottom: 30px;
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .connection-status.connected {
+            background: rgba(76, 175, 80, 0.8);
+        }
+
+        .connection-status.disconnected {
+            background: rgba(244, 67, 54, 0.8);
+        }
+
+        .server-list {
+            margin-top: 15px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .loading-spinner {
+            display: none;
+            margin: 20px auto;
+        }
+
+        /* Face detection overlay */
+        .face-overlay {
+            position: absolute;
+            border: 2px solid #4CAF50;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .confidence-bar {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #F44336, #FF9800, #4CAF50);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <!-- Connection Status -->
+    <div id="connection-status" class="connection-status disconnected">
+        <i class="fas fa-wifi"></i> Connecting...
+    </div>
+
+    <div class="auth-container">
+        <div class="auth-card">
+            <!-- Logo and Title -->
+            <div class="logo">
+                <i class="fas fa-robot"></i> BotiBot
+            </div>
+            <div class="subtitle">Secure Face Recognition Authentication</div>
+
+            <!-- Camera Preview -->
+            <div id="camera-preview" class="camera-preview">
+                <video id="camera-video" class="camera-video" autoplay muted playsinline></video>
+                <img id="camera-feed" class="camera-feed" alt="Camera Feed">
+                <div id="camera-icon" class="camera-icon">🔒</div>
+                <div id="face-overlay" class="face-overlay"></div>
+            </div>
+
+            <!-- Status Message -->
+            <div id="status-message" class="status-message">
+                Position your face in the camera view
+            </div>
+
+            <!-- Confidence Bar -->
+            <div class="confidence-bar">
+                <div id="confidence-fill" class="confidence-fill"></div>
+            </div>
+
+            <!-- Verify Button -->
+            <button id="verify-btn" class="verify-btn" onclick="startFaceRecognition()">
+                <i class="fas fa-user-check"></i> Verify Identity
+            </button>
+
+            <!-- Loading Spinner -->
+            <div id="loading-spinner" class="loading-spinner">
+                <div class="spinner-border text-light" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+            </div>
+
+            <!-- Server Status -->
+            <div class="server-list">
+                <div id="server-status">Testing server connections...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div class="modal fade" id="successModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="background: rgba(76, 175, 80, 0.95); color: white; border: none;">
+                <div class="modal-body text-center p-4">
+                    <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
+                    <h4>Authentication Successful!</h4>
+                    <p id="welcome-message">Welcome back!</p>
+                    <p>Redirecting to dashboard...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div class="modal fade" id="errorModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="background: rgba(244, 67, 54, 0.95); color: white; border: none;">
+                <div class="modal-body text-center p-4">
+                    <div style="font-size: 60px; margin-bottom: 20px;">❌</div>
+                    <h4>Authentication Failed</h4>
+                    <p id="error-message">Face not recognized</p>
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Try Again</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Face Recognition Client Implementation
+        class FaceRecognitionClient {
+            constructor() {
+                // Use current server for recognition only
+                this.currentServer = window.location.origin; // Current server (port 5000)
+                this.cameraStream = null;
+                this.cameraVideo = null;
+                this.cameraFeed = null;
+                this.isAuthenticating = false;
+                this.cameraInitialized = false;
+                this.initializationPromise = null;
+                
+                this.initializationPromise = this.initializeServerCamera();
+                this.testCurrentServer();
+            }
+
+            async testCurrentServer() {
+                const statusDiv = document.getElementById('server-status');
+                const connectionStatus = document.getElementById('connection-status');
+                
+                statusDiv.textContent = 'Testing recognition service...';
+                
+                try {
+                    console.log(`🔍 Testing recognition service: ${this.currentServer}`);
+                    
+                    // Test if facial recognition is available (simplified test)
+                    const authResponse = await fetch('/api/facial-recognition/authenticate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            timestamp: new Date().toISOString(),
+                            source: 'connection_test'
+                        })
+                    });
+                    
+                    if (authResponse.ok) {
+                        console.log(`🔗 Recognition Service: ✅ Connected`);
+                        connectionStatus.className = 'connection-status connected';
+                        connectionStatus.innerHTML = '<i class="fas fa-wifi"></i> Connected';
+                        statusDiv.textContent = `Recognition service ready`;
+                        return true;
+                    } else {
+                        throw new Error('Recognition service not available');
+                    }
+                } catch (error) {
+                    console.log(`🔗 Recognition Service: ❌ Failed - ${error.message}`);
+                    connectionStatus.className = 'connection-status disconnected';
+                    connectionStatus.innerHTML = '<i class="fas fa-wifi"></i> No Server';
+                    statusDiv.textContent = 'Recognition service unavailable';
+                    return false;
+                }
+            }
+
+            async initializeServerCamera() {
+                console.log("📹 Initializing server camera feed...");
+                
+                const cameraFeed = document.getElementById('camera-feed');
+                const cameraVideo = document.getElementById('camera-video');
+                const cameraIcon = document.getElementById('camera-icon');
+                const statusDiv = document.getElementById('server-status');
+                
+                this.cameraFeed = cameraFeed;
+                
+                try {
+                    // Test if video feed endpoint is available
+                    console.log("🎥 Testing video feed endpoint...");
+                    const testResponse = await fetch('/video_feed', {
+                        signal: AbortSignal.timeout(5000)
+                    });
+                    
+                    if (!testResponse.ok) {
+                        throw new Error(`Video feed not available (${testResponse.status})`);
+                    }
+                    
+                    // Set up image element for MJPEG stream
+                    cameraFeed.src = '/video_feed';
+                    cameraFeed.style.display = 'block';
+                    
+                    // Wait for image to load
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => {
+                            reject(new Error('Video feed loading timeout'));
+                        }, 10000);
+                        
+                        cameraFeed.onload = () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        };
+                        
+                        cameraFeed.onerror = () => {
+                            clearTimeout(timeout);
+                            reject(new Error('Video feed loading failed'));
+                        };
+                    });
+                    
+                    // Hide video element and icon, show feed
+                    cameraVideo.style.display = 'none';
+                    cameraIcon.style.display = 'none';
+                    
+                    // Mark as initialized
+                    this.cameraInitialized = true;
+                    
+                    console.log("✅ Server camera feed connected successfully!");
+                    statusDiv.textContent = 'Server camera feed ready';
+                    
+                    // Update UI to ready state
+                    this.updateUI('ready');
+                    
+                } catch (error) {
+                    console.error("❌ Server camera feed failed:", error);
+                    
+                    // Show error state
+                    cameraFeed.style.display = 'none';
+                    cameraVideo.style.display = 'none';
+                    cameraIcon.style.display = 'block';
+                    cameraIcon.textContent = '❌';
+                    
+                    this.cameraInitialized = false;
+                    
+                    // Provide specific error messages
+                    if (error.message.includes('404')) {
+                        statusDiv.textContent = 'Video feed endpoint not found - check server route';
+                    } else if (error.message.includes('timeout')) {
+                        statusDiv.textContent = 'Video feed connection timeout';
+                    } else {
+                        statusDiv.textContent = `Camera feed error: ${error.message}`;
+                    }
+                    
+                    // Update UI to show error
+                    this.updateUI('error', `Camera feed initialization failed: ${error.message}`);
+                    
+                    throw error;
+                }
+            }
+
+            async captureImageFromFeed() {
+                console.log('📸 Capturing image from server camera feed...');
+                
+                try {
+                    // Wait for camera initialization if not ready
+                    if (!this.cameraInitialized) {
+                        console.log('⏳ Waiting for camera initialization...');
+                        if (this.initializationPromise) {
+                            await this.initializationPromise;
+                        } else {
+                            throw new Error('Camera initialization not started');
+                        }
+                    }
+                    
+                    if (!this.cameraFeed) {
+                        throw new Error('Camera feed not initialized');
+                    }
+                    
+                    // Check if image feed is loaded
+                    if (!this.cameraFeed.complete || this.cameraFeed.naturalWidth === 0) {
+                        console.log('⏳ Waiting for camera feed to load...');
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => {
+                                reject(new Error('Camera feed not ready timeout'));
+                            }, 5000);
+                            
+                            const checkReady = () => {
+                                if (this.cameraFeed.complete && this.cameraFeed.naturalWidth > 0) {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                } else {
+                                    setTimeout(checkReady, 100);
+                                }
+                            };
+                            checkReady();
+                        });
+                    }
+                    
+                    // Create canvas to capture current frame from image
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    
+                    // Set canvas size to match image
+                    canvas.width = this.cameraFeed.naturalWidth || 640;
+                    canvas.height = this.cameraFeed.naturalHeight || 480;
+                    
+                    // Validate image dimensions
+                    if (canvas.width === 0 || canvas.height === 0) {
+                        throw new Error('Invalid camera feed dimensions');
+                    }
+                    
+                    // Draw current frame from image feed to canvas
+                    context.drawImage(this.cameraFeed, 0, 0, canvas.width, canvas.height);
+                    
+                    // Convert canvas to base64 image
+                    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    const base64Data = imageDataUrl.split(',')[1];
+                    
+                    // Validate captured image
+                    if (!base64Data || base64Data.length < 100) {
+                        throw new Error('Captured image is empty or invalid');
+                    }
+                    
+                    console.log(`📸 Image captured from server feed (${canvas.width}x${canvas.height})`);
+                    return base64Data;
+                    
+                } catch (error) {
+                    console.error('Server camera feed capture error:', error);
+                    throw error;
+                }
+            }
+
+            async recognizeFace(imageBase64) {
+                console.log('🔍 Sending image for face recognition...');
+                
+                try {
+                    const response = await fetch('/api/facial-recognition/authenticate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            timestamp: new Date().toISOString(),
+                            source: 'web_interface',
+                            image: imageBase64
+                        }),
+                        signal: AbortSignal.timeout(15000)
+                    });
+                    
+                    console.log(`📡 Response status: ${response.status}`);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('✅ Response:', data);
+                        
+                        if (data.authenticated) {
+                            console.log(`✅ Face recognition successful!`);
+                            // Transform response to match expected format
+                            return {
+                                success: true,
+                                recognized_user: {
+                                    firstName: 'Authorized',
+                                    lastName: 'User',
+                                    email: 'user@botibot.com'
+                                },
+                                confidence_data: {
+                                    confidence: data.confidence || 0.95
+                                }
+                            };
+                        } else {
+                            throw new Error(data.message || 'Face not recognized');
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        throw new Error(`Server error ${response.status}: ${errorText}`);
+                    }
+                    
+                } catch (error) {
+                    console.error('❌ Face recognition error:', error);
+                    throw error;
+                }
+            }
+
+            updateUI(state, message = '', data = null) {
+                const verifyBtn = document.getElementById('verify-btn');
+                const cameraPreview = document.getElementById('camera-preview');
+                const cameraIcon = document.getElementById('camera-icon');
+                const cameraVideo = document.getElementById('camera-video');
+                const statusMessage = document.getElementById('status-message');
+                const confidenceFill = document.getElementById('confidence-fill');
+                const loadingSpinner = document.getElementById('loading-spinner');
+
+                switch (state) {
+                    case 'scanning':
+                        verifyBtn.disabled = true;
+                        verifyBtn.className = 'verify-btn scanning';
+                        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Scanning...';
+                        
+                        cameraPreview.className = 'camera-preview scanning';
+                        // Keep feed visible, hide icon
+                        if (this.cameraFeed && this.cameraInitialized) {
+                            this.cameraFeed.style.display = 'block';
+                            cameraVideo.style.display = 'none';
+                            cameraIcon.style.display = 'none';
+                        } else {
+                            if (this.cameraFeed) this.cameraFeed.style.display = 'none';
+                            cameraVideo.style.display = 'none';
+                            cameraIcon.textContent = '📸';
+                            cameraIcon.style.display = 'block';
+                        }
+                        
+                        statusMessage.textContent = '🔄 Analyzing biometric data...';
+                        statusMessage.style.color = '#ffd700';
+                        
+                        loadingSpinner.style.display = 'block';
+                        confidenceFill.style.width = '0%';
+                        break;
+                        
+                    case 'success':
+                        verifyBtn.disabled = false;
+                        verifyBtn.className = 'verify-btn success';
+                        verifyBtn.innerHTML = '<i class="fas fa-check"></i> Access Granted';
+                        
+                        cameraPreview.className = 'camera-preview success';
+                        // Show success icon over feed
+                        cameraIcon.textContent = '✅';
+                        cameraIcon.style.display = 'block';
+                        
+                        const confidence = data?.confidence_data?.confidence || 0.95;
+                        const user = data?.recognized_user;
+                        const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
+                        
+                        statusMessage.textContent = `✓ Welcome ${userName}! (${(confidence * 100).toFixed(1)}% confidence)`;
+                        statusMessage.style.color = '#4CAF50';
+                        
+                        confidenceFill.style.width = `${confidence * 100}%`;
+                        loadingSpinner.style.display = 'none';
+                        
+                        // Show success modal
+                        document.getElementById('welcome-message').textContent = `Welcome back, ${userName}!`;
+                        new bootstrap.Modal(document.getElementById('successModal')).show();
+                        
+                        // Redirect after delay
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 3000);
+                        break;
+                        
+                    case 'error':
+                        verifyBtn.disabled = false;
+                        verifyBtn.className = 'verify-btn';
+                        verifyBtn.innerHTML = '<i class="fas fa-user-check"></i> Try Again';
+                        
+                        cameraPreview.className = 'camera-preview error';
+                        // Show error icon over feed
+                        cameraIcon.textContent = '❌';
+                        cameraIcon.style.display = 'block';
+                        
+                        statusMessage.textContent = message || 'Authentication failed';
+                        statusMessage.style.color = '#F44336';
+                        
+                        confidenceFill.style.width = '0%';
+                        loadingSpinner.style.display = 'none';
+                        
+                        // Show error modal
+                        document.getElementById('error-message').textContent = message || 'Face not recognized';
+                        new bootstrap.Modal(document.getElementById('errorModal')).show();
+                        break;
+                        
+                    case 'ready':
+                        verifyBtn.disabled = false;
+                        verifyBtn.className = 'verify-btn';
+                        verifyBtn.innerHTML = '<i class="fas fa-user-check"></i> Verify Identity';
+                        
+                        cameraPreview.className = 'camera-preview';
+                        // Show appropriate display based on camera status
+                        if (this.cameraFeed && this.cameraInitialized) {
+                            this.cameraFeed.style.display = 'block';
+                            cameraVideo.style.display = 'none';
+                            cameraIcon.style.display = 'none';
+                        } else {
+                            if (this.cameraFeed) this.cameraFeed.style.display = 'none';
+                            cameraVideo.style.display = 'none';
+                            cameraIcon.textContent = '🔒';
+                            cameraIcon.style.display = 'block';
+                        }
+                        
+                        statusMessage.textContent = 'Position your face in the camera view';
+                        statusMessage.style.color = 'white';
+                        
+                        confidenceFill.style.width = '0%';
+                        loadingSpinner.style.display = 'none';
+                        break;
+                        
+                    case 'initializing':
+                        verifyBtn.disabled = true;
+                        verifyBtn.className = 'verify-btn';
+                        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing Camera...';
+                        
+                        cameraPreview.className = 'camera-preview';
+                        cameraFeed.style.display = 'none';
+                        cameraVideo.style.display = 'none';
+                        cameraIcon.textContent = '📹';
+                        cameraIcon.style.display = 'block';
+                        
+                        statusMessage.textContent = 'Initializing camera, please wait...';
+                        statusMessage.style.color = '#ffd700';
+                        
+                        confidenceFill.style.width = '0%';
+                        loadingSpinner.style.display = 'block';
+                        break;
+                }
+            }
+
+            async authenticate() {
+                if (this.isAuthenticating) return;
+                
+                this.isAuthenticating = true;
+                this.updateUI('scanning');
+                
+                try {
+                    // Ensure camera is initialized first
+                    if (!this.cameraInitialized) {
+                        console.log('⏳ Camera not ready, initializing...');
+                        
+                        if (this.initializationPromise) {
+                            await this.initializationPromise;
+                        } else {
+                            // Try to reinitialize
+                            this.initializationPromise = this.initializeServerCamera();
+                            await this.initializationPromise;
+                        }
+                        
+                        if (!this.cameraInitialized) {
+                            throw new Error('Camera initialization failed');
+                        }
+                    }
+                    
+                    // Capture image from server camera feed
+                    const imageBase64 = await this.captureImageFromFeed();
+                    
+                    // Add scanning animation delay
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    // Recognize face
+                    const result = await this.recognizeFace(imageBase64);
+                    
+                    this.updateUI('success', null, result);
+                    
+                } catch (error) {
+                    console.error('Authentication error:', error);
+                    this.updateUI('error', error.message);
+                } finally {
+                    this.isAuthenticating = false;
+                    
+                    // Reset UI after delay if not successful
+                    setTimeout(() => {
+                        if (!document.getElementById('verify-btn').classList.contains('success')) {
+                            this.updateUI('ready');
+                        }
+                    }, 5000);
+                }
+            }
+
+            cleanup() {
+                // Stop camera feed
+                if (this.cameraFeed) {
+                    this.cameraFeed.src = '';
+                    this.cameraFeed = null;
+                    console.log('🛑 Stopped camera feed');
+                }
+                
+                // Clean up any remaining streams (legacy)
+                if (this.cameraStream) {
+                    const tracks = this.cameraStream.getTracks();
+                    tracks.forEach(track => {
+                        track.stop();
+                        console.log(`🛑 Stopped camera track: ${track.kind}`);
+                    });
+                    this.cameraStream = null;
+                }
+                
+                // Clean up video element (legacy)
+                if (this.cameraVideo) {
+                    this.cameraVideo.srcObject = null;
+                }
+                
+                console.log("🧹 Camera cleanup completed");
+            }
+        }
+
+        // Global instance
+        let faceRecognitionClient;
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Show initializing state
+            const verifyBtn = document.getElementById('verify-btn');
+            const statusMessage = document.getElementById('status-message');
+            
+            verifyBtn.disabled = true;
+            verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+            statusMessage.textContent = 'Initializing camera system...';
+            statusMessage.style.color = '#ffd700';
+            
+            // Initialize face recognition client
+            faceRecognitionClient = new FaceRecognitionClient();
+        });
+
+        // Global function for button
+        async function startFaceRecognition() {
+            if (faceRecognitionClient) {
+                // Check if camera is ready
+                if (!faceRecognitionClient.cameraInitialized) {
+                    console.log('⏳ Camera not ready, please wait...');
+                    faceRecognitionClient.updateUI('error', 'Camera is initializing, please wait...');
+                    
+                    // Try to wait for initialization
+                    try {
+                        if (faceRecognitionClient.initializationPromise) {
+                            await faceRecognitionClient.initializationPromise;
+                        }
+                    } catch (error) {
+                        console.error('Camera initialization failed:', error);
+                        return;
+                    }
+                }
+                
+                await faceRecognitionClient.authenticate();
+            }
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (faceRecognitionClient) {
+                faceRecognitionClient.cleanup();
+            }
+        });
+
+        // Add keyboard support
+        document.addEventListener('keydown', function(event) {
+            if (event.code === 'Space' || event.code === 'Enter') {
+                event.preventDefault();
+                startFaceRecognition();
+            }
+        });
+    </script>
+</body>
+</html>
