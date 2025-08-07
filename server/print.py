@@ -52,6 +52,27 @@ mqtt_connected = False
 VENDOR_ID = 0x0483
 PRODUCT_ID = 0x5840  # Correct Product ID from your working code
 
+def get_alcohol_description(alcohol_level):
+    """
+    Get alcohol level description based on reading
+    
+    Args:
+        alcohol_level (float): Alcohol level reading
+        
+    Returns:
+        str: Description of alcohol level
+    """
+    try:
+        level = float(alcohol_level)
+        if level == 0:
+            return "Sober"
+        elif level <= 79.99:
+            return "Intoxicated"
+        else:
+            return "Hihgly Intoxicated"
+    except (ValueError, TypeError):
+        return "Unknown"
+
 def initialize_printer():
     """Try different printer initialization methods"""
     
@@ -123,7 +144,7 @@ def print_current_readings(sensor_data=None):
         dict: Result of print operation with success status and message
     """
     try:
-        # If no sensor data provided, get current data
+        # If no sensor data provided, get current data from MQTT
         if sensor_data is None:
             sensor_data = get_current_sensor_data()
         
@@ -137,6 +158,7 @@ def print_current_readings(sensor_data=None):
             }
         
         # Extract sensor values with fallbacks
+        # Use the same format as the web interface sends
         temp = sensor_data.get('temp', {}).get('value', 'N/A')
         distance = sensor_data.get('distance', {}).get('value', 'N/A')
         weight = sensor_data.get('weight_value', {}).get('value', 'N/A')
@@ -163,7 +185,7 @@ def print_current_readings(sensor_data=None):
         print_text += "-" * 32 + "\n"
         
         # Temperature
-        if temp != 'N/A':
+        if temp != 'N/A' and temp != 0:
             print_text += f"Temperature: {temp} °C\n"
             if temp_time != 'N/A':
                 time_str = temp_time.split('T')[1][:8] if 'T' in str(temp_time) else str(temp_time)[:8]
@@ -171,9 +193,9 @@ def print_current_readings(sensor_data=None):
         else:
             print_text += "Temperature: No data\n"
         
-        # Distance/Height
-        if distance != 'N/A':
-            print_text += f"Distance: {distance} cm\n"
+        # Distance/Height  
+        if distance != 'N/A' and distance != 0:
+            print_text += f"Distance: {distance} mm\n"
             if distance_time != 'N/A':
                 time_str = distance_time.split('T')[1][:8] if 'T' in str(distance_time) else str(distance_time)[:8]
                 print_text += f"  Time: {time_str}\n"
@@ -181,8 +203,8 @@ def print_current_readings(sensor_data=None):
             print_text += "Distance: No data\n"
         
         # Weight
-        if weight != 'N/A':
-            print_text += f"Weight: {weight} kg\n"
+        if weight != 'N/A' and weight != 0:
+            print_text += f"Weight: {weight} g\n"
             if weight_time != 'N/A':
                 time_str = weight_time.split('T')[1][:8] if 'T' in str(weight_time) else str(weight_time)[:8]
                 print_text += f"  Time: {time_str}\n"
@@ -198,13 +220,16 @@ def print_current_readings(sensor_data=None):
         else:
             print_text += "Heart Rate: No data\n"
         
-        # Alcohol Level
-        if alcohol != 'N/A':
+        # Alcohol Level with description
+        if alcohol != 'N/A' and alcohol != 0:
             try:
                 alcohol_float = float(alcohol)
+                alcohol_desc = get_alcohol_description(alcohol_float)
                 print_text += f"Alcohol Level: {alcohol_float:.2f}\n"
+                print_text += f"Status: {alcohol_desc}\n"
             except (ValueError, TypeError):
                 print_text += f"Alcohol Level: {alcohol}\n"
+                print_text += f"Status: Unknown\n"
             if alcohol_time != 'N/A':
                 time_str = alcohol_time.split('T')[1][:8] if 'T' in str(alcohol_time) else str(alcohol_time)[:8]
                 print_text += f"  Time: {time_str}\n"

@@ -288,11 +288,23 @@ mqtt_client.on_message = on_message
 @app.route("/")
 def index():
     return render_template('anothercopy.html')
+    # return render_template('final2.html')
 
 @app.route("/another")
 def another():
     return render_template('anothercopy.html')
-    
+
+# Endpoint to receive session storage data from the client
+@app.route('/get_session_storage', methods=['POST'])
+def get_session_storage():
+    session_data = request.json  # Expect JSON data from the client
+    return jsonify({"status": "success", "data": session_data})
+
+# Endpoint to access Flask server-side session
+@app.route('/get_flask_session')
+def get_flask_session():
+    return jsonify(dict(session))  # Return server-side session data
+
 # @app.route("/index")
 # def dashboard():
 #     return render_template('index.html')
