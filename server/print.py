@@ -69,7 +69,7 @@ def get_alcohol_description(alcohol_level):
         elif level <= 79.99:
             return "Intoxicated"
         else:
-            return "Hihgly Intoxicated"
+            return "Highly Intoxicated"
     except (ValueError, TypeError):
         return "Unknown"
 
@@ -188,8 +188,8 @@ def print_current_readings(sensor_data=None):
     Print current sensor readings to thermal printer
     
     Args:
-        sensor_data (dict): Dictionary containing current sensor readings.
-                           If None, will try to get current data automatically.
+        sensor_data (dict): Dictionary containing current sensor readings from frontend status cards.
+                           If None, will try to get current data automatically from MQTT.
         
     Returns:
         dict: Result of print operation with success status and message
@@ -197,7 +197,10 @@ def print_current_readings(sensor_data=None):
     try:
         # If no sensor data provided, get current data from MQTT
         if sensor_data is None:
+            print("📡 No sensor data provided, getting live MQTT data...")
             sensor_data = get_current_sensor_data()
+        else:
+            print(f"📊 Using sensor data from frontend status cards: {sensor_data}")
         
         # Initialize printer for this print job
         printer = initialize_printer()
@@ -208,14 +211,20 @@ def print_current_readings(sensor_data=None):
                 'message': 'Printer not available or failed to initialize'
             }
         
-        # Extract values as displayed in status cards
+        # Extract values as displayed in status cards (captured or live values)
         temp = sensor_data.get('temp', {}).get('value', None)
         bpm = sensor_data.get('bpm', {}).get('value', None)
         alcohol = sensor_data.get('alcohol', {}).get('value', None)
         weight = sensor_data.get('weight_value', {}).get('value', None)
         distance = sensor_data.get('distance', {}).get('value', None)
         
-        # Format values for printing (match dashboard)
+        print(f"🌡️  Temperature: {temp}")
+        print(f"💓 BPM: {bpm}")
+        print(f"🍷 Alcohol: {alcohol}")
+        print(f"⚖️  Weight: {weight}")
+        print(f"📏 Distance: {distance}")
+        
+        # Format values for printing (match dashboard formatting exactly)
         def fmt(val, decimals=2, default='--'):
             try:
                 if val is None:
@@ -231,20 +240,23 @@ def print_current_readings(sensor_data=None):
         print_text += "=" * 32 + "\n"
         print_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         print_text += "=" * 32 + "\n\n"
-        print_text += "SENSOR STATUS CARD VALUES:\n"
+        print_text += "STATUS CARD VALUES:\n"
         print_text += "-" * 32 + "\n"
         print_text += f"Temperature: {fmt(temp, 2)} °C\n"
         print_text += f"Heart Rate: {fmt(bpm, 0)} BPM\n"
         print_text += f"Alcohol Level: {fmt(alcohol, 2)}\n"
-        print_text += f"Weight: {fmt(weight, 2)} kg\n"
-        print_text += f"Distance: {fmt(distance, 2)} cm\n"
-        print_text += "\n" + "=" * 32 + "\n"
+        print_text += f"  Status: {get_alcohol_description(alcohol or 0)}\n"
+        print_text += f"Weight: {fmt(weight, 2)} g\n"
+        print_text += f"Distance: {fmt(distance, 2)} mm\n"
+        print_text += "\n" + "-" * 32 + "\n"
+        print_text += "Note: Captured values are\nshown as locked on dashboard\n"
+        print_text += "=" * 32 + "\n"
         print_text += "BOTIBOT Health Monitor\n"
         print_text += "www.botibot.com\n"
         print_text += "=" * 32 + "\n"
         
         # Print to thermal printer
-        print("Printing health report...")
+        print("Printing health report with status card values...")
         print(f"Print content:\n{print_text}")
         
         try:
@@ -266,7 +278,6 @@ def print_current_readings(sensor_data=None):
             }
             
         except Exception as print_error:
-            # If printing fails, try to close connection anyway
             try:
                 printer.close()
             except:
@@ -291,17 +302,6 @@ def print_current_readings(sensor_data=None):
         }
 
 def print_medication_schedule(user_id, medications_data=None):
-    """
-    Print medication schedule to thermal printer
-    
-    Args:
-        user_id (str): User ID for the medication schedule
-        medications_data (list): List of medication data.
-                                If None, will fetch from database.
-        
-    Returns:
-        dict: Result of print operation with success status and message
-    """
     try:
         # Initialize printer for this print job
         printer = initialize_printer()
@@ -317,7 +317,7 @@ def print_medication_schedule(user_id, medications_data=None):
             medications_data = []
         
         # Get user name from session storage (if available)
-        user_name = "Patient"  # Default fallback
+        # user_name = "Patient"
         
         # Format days helper
         day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -326,7 +326,7 @@ def print_medication_schedule(user_id, medications_data=None):
         print_text = "BOTIBOT MEDICATION SCHEDULE\n"
         print_text += "=" * 32 + "\n"
         print_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        print_text += f"Patient: {user_name}\n"
+        # print_text += f"Patient: {user_name}\n"
         print_text += "=" * 32 + "\n\n"
         
         if not medications_data or len(medications_data) == 0:

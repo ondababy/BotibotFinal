@@ -746,7 +746,7 @@
               <div class="card-body d-flex flex-column justify-content-center">
                 <i class="fas fa-ruler fa-3x text-info mb-3"></i>
                 <div class="sensor-value text-info" id="distance-value">--</div>
-                <div class="sensor-label">Distance (cm)</div>
+                <div class="sensor-label">Distance (mm)</div>
                 <div class="timestamp" id="distance-time">--</div>
               </div>
             </div>
@@ -758,7 +758,7 @@
                 <div class="sensor-value text-warning" id="weight-value">
                   --
                 </div>
-                <div class="sensor-label">Weight (kg)</div>
+                <div class="sensor-label">Weight (g)</div>
                 <div class="timestamp" id="weight-time">--</div>
               </div>
             </div>
@@ -784,7 +784,7 @@
                   <i class="fas fa-info-circle me-2"></i>Click the button below to choose dispensing method
                 </p>
                 <div class="d-grid">
-                  <button class="btn btn-info" onclick="showDispenseOptions()">
+                  <button class="btn btn-info" onclick="setServo(0)">
                     <i class="fas fa-pills me-2"></i>Dispense Pill
                   </button>
                 </div>
@@ -1558,7 +1558,6 @@
       // Initialize full dashboard (for authenticated users)
       function initializeDashboard() {
         console.log("🚀 Dashboard authenticated and initialized");
-        // Dashboard is already monitoring, no need to start intervals again
         console.log("✅ Botibot Dashboard fully initialized");
       }
 
@@ -1682,11 +1681,6 @@
         },
         options: chartOptions,
       });
-
-      // Servo slider update
-      // document.getElementById("servo-slider").oninput = function () {
-      //   document.getElementById("servo-angle").textContent = this.value;
-      // };
 
       // Data fetching functions
       function fetchSensorData() {
@@ -1856,13 +1850,12 @@
 
       // Control functions
       function setServo() {
-        // Move servo to 90° to trigger dispensing
         fetch("/api/control/servo", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ angle: 90 }),
+          body: JSON.stringify({ angle: 60 }),
         })
           .then((response) => response.json())
           .then((data) => {
@@ -1895,7 +1888,7 @@
                       "danger"
                     );
                   });
-              }, 3000);
+              }, 2000);
             } else {
               showNotification("Error dispensing: " + data.message, "danger");
             }
@@ -1991,42 +1984,6 @@
             showNotification("Error printing: " + error.message, "danger");
           });
       }
-
-      // function printReadings() {
-      //   const printData = {
-      //     temperature:
-      //       document.getElementById("temp-value")?.textContent || "N/A",
-      //     distance:
-      //       document.getElementById("distance-value")?.textContent || "N/A",
-      //     weight: document.getElementById("weight-value")?.textContent || "N/A",
-      //     bpm: document.getElementById("bpm-value")?.textContent || "N/A",
-      //     alcohol:
-      //       document.getElementById("alcohol-value")?.textContent || "N/A",
-      //     timestamp: new Date().toISOString(),
-      //   };
-
-      //   fetch("/print-readings", {
-      //     method: "POST",
-      //     headers: { "Content-Type": "application/json" },
-      //     body: JSON.stringify(printData),
-      //   })
-      //     .then((response) => response.json())
-      //     .then((result) => {
-      //       if (result.success) {
-      //         showNotification(
-      //           result.message || "Print command sent successfully!",
-      //           "success"
-      //         );
-      //       } else {
-      //         throw new Error(result.error || "Printing failed");
-      //       }
-      //     })
-      //     .catch((error) => {
-      //       console.error("Error printing:", error);
-      //       showNotification("Error printing: " + error.message, "danger");
-      //     });
-      // }
-
       function showDispenseOptions() {
         const dispenseModal = new bootstrap.Modal(document.getElementById('dispenseModal'));
         dispenseModal.show();
@@ -2118,7 +2075,7 @@
                       "warning"
                     );
                   });
-              }, 3000);
+              }, 2000);
             } else {
               showNotification(
                 "❌ Error dispensing pill with quick mode: " + data.message,

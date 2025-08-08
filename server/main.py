@@ -4,7 +4,7 @@ import subprocess
 import paho.mqtt.client as mqtt
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import time
 import os
 import io
@@ -13,6 +13,7 @@ from PIL import Image
 from config import *
 from player import AudioPlayer
 from flask_cors import CORS
+import pytz
 
 from flask_pymongo import PyMongo
 from werkzeug.security import check_password_hash
@@ -67,6 +68,13 @@ last_audio_alerts = {
 }
 
 AUDIO_COOLDOWN = 30  # Seconds between repeated audio alerts
+
+# Medication dispensing system
+medication_monitoring_active = False
+medication_monitor_thread = None
+last_dispensed_medications = {}  # Track last dispensed time for each medication
+DISPENSE_COOLDOWN = 300  # 5 minutes cooldown between same medication dispensing
+GMT8 = pytz.timezone('Asia/Manila')  # GMT+8 timezone
 
 # MQTT connection status
 mqtt_connected = False
@@ -325,6 +333,267 @@ def get_mqtt_status():
         'port': MQTT_PORT
     })
 
+# ==================== MEDICATION MONITORING SYSTEM ====================
+
+def parse_12hr_time_to_24hr(time_str):
+    """Convert 12-hour format time string to 24-hour format for comparison"""
+    try:
+        # Handle different time formats: "8:00 AM", "8:00AM", "08:00 AM", etc.
+        time_str = time_str.strip().upper()
+        
+        # Parse the time
+        if 'AM' in time_str or 'PM' in time_str:
+            # 12-hour format
+            time_part = time_str.replace('AM', '').replace('PM', '').strip()
+            hours, minutes = map(int, time_part.split(':'))
+            
+            # Convert to 24-hour format
+            if 'PM' in time_str and hours != 12:
+                hours += 12
+            elif 'AM' in time_str and hours == 12:
+                hours = 0
+                
+            return f"{hours:02d}:{minutes:02d}"
+        else:
+            # Already in 24-hour format
+            return time_str
+    except Exception as e:
+        print(f"❌ Error parsing time '{time_str}': {e}")
+        return time_str
+
+def is_am_time(time_str):
+    """Check if a time string represents AM (morning) time"""
+    try:
+        # Convert to 24-hour format first
+        time_24hr = parse_12hr_time_to_24hr(time_str)
+        hours = int(time_24hr.split(':')[0])
+        
+        # Consider 6 AM to 11:59 AM as morning (stepper motor)
+        # Consider 12 PM to 5:59 AM as afternoon/evening (servo motor)
+        return 6 <= hours < 12
+    except:
+        # Default to AM if parsing fails
+        return True
+
+def get_current_gmt8_time():
+    """Get current time in GMT+8 timezone"""
+    return datetime.now(GMT8)
+
+def time_matches_schedule(schedule_time, current_time, tolerance_minutes=5):
+    """Check if current time matches medication schedule time within tolerance"""
+    try:
+        # Parse schedule time to 24-hour format
+        schedule_24hr = parse_12hr_time_to_24hr(schedule_time)
+        schedule_hours, schedule_minutes = map(int, schedule_24hr.split(':'))
+        
+        # Get current time components
+        current_hours = current_time.hour
+        current_minutes = current_time.minute
+        
+        # Calculate difference in minutes
+        schedule_total_minutes = schedule_hours * 60 + schedule_minutes
+        current_total_minutes = current_hours * 60 + current_minutes
+        
+        # Check if within tolerance (default 5 minutes)
+        diff = abs(schedule_total_minutes - current_total_minutes)
+        
+        # Handle day boundary (23:59 to 00:01)
+        if diff > 720:  # More than 12 hours, likely day boundary
+            diff = 1440 - diff  # 1440 minutes in a day
+            
+        return diff <= tolerance_minutes
+    except Exception as e:
+        print(f"❌ Error checking time match: {e}")
+        return False
+
+def should_dispense_medication(medication):
+    """Check if medication should be dispensed now"""
+    try:
+        current_time = get_current_gmt8_time()
+        current_day = current_time.weekday()  # 0=Monday, 6=Sunday
+        
+        # Check if medication is active
+        if not medication.get('is_active', False):
+            return False
+            
+        # Check frequency
+        frequency = medication.get('frequency', 'daily')
+        
+        if frequency == 'daily':
+            # Check every day
+            pass
+        elif frequency == 'specific_days':
+            # Check specific days of week
+            days_of_week = medication.get('days_of_week', [])
+            # Convert Monday=0 to Sunday=0 format if needed
+            if current_day not in days_of_week:
+                return False
+        else:
+            # Other frequencies not supported yet
+            return False
+            
+        # Check if any scheduled time matches current time
+        medication_times = medication.get('times', [])
+        for med_time in medication_times:
+            if time_matches_schedule(med_time, current_time):
+                return True
+                
+        return False
+    except Exception as e:
+        print(f"❌ Error checking medication dispensing: {e}")
+        return False
+
+def dispense_pill_automatically(medication, use_stepper=True):
+    """Automatically dispense a pill using stepper (AM) or servo (PM)"""
+    try:
+        medication_name = medication.get('medication_name', 'Unknown')
+        med_id = str(medication.get('_id', 'unknown'))
+        
+        print(f"💊 Auto-dispensing {medication_name} using {'stepper' if use_stepper else 'servo'}")
+        
+        if use_stepper:
+            # Use stepper motor (precision mode) for AM medications
+            command = {'steps': 100, 'direction': 'CW'}  # Default values
+            mqtt_client.publish(TOPICS['stepper'], json.dumps(command))
+            play_audio_threaded(audio_player.play_medication_alert, 'dispensing')
+            print(f"🔧 Stepper command sent: {command}")
+        else:
+            # Use servo motor (quick mode) for PM medications like dispensePillQuickMode()
+            try:
+                # Step 1: Move servo to 90° to dispense
+                mqtt_client.publish(TOPICS['servo'], str(90))
+                play_audio_threaded(audio_player.play_medication_alert, 'dispensing')
+                print(f"🔧 Servo command sent: 90° (dispensing)")
+                
+                # Step 2: Schedule servo return to 0° after 3 seconds (like quick mode)
+                def return_servo_to_close():
+                    time.sleep(3)  # Wait 3 seconds like dispensePillQuickMode
+                    try:
+                        mqtt_client.publish(TOPICS['servo'], str(0))
+                        play_audio_threaded(audio_player.play_medication_alert, 'complete')
+                        print(f"🔧 Servo returned to 0° (closed)")
+                        print(f"✅ Auto-dispensed {medication_name} with servo (PM mode) - dispensing complete!")
+                    except Exception as e:
+                        print(f"⚠️ Pill dispensed but error closing servo mechanism: {e}")
+                        
+                # Start the servo return thread (non-blocking)
+                servo_thread = threading.Thread(target=return_servo_to_close, daemon=True)
+                servo_thread.start()
+                
+            except Exception as servo_error:
+                print(f"❌ Error with servo dispensing: {servo_error}")
+                return False
+        
+        # Update last dispensed time
+        current_time = get_current_gmt8_time()
+        last_dispensed_medications[med_id] = current_time.timestamp()
+        
+        print(f"✅ Successfully initiated auto-dispensing for {medication_name}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error auto-dispensing medication: {e}")
+        play_audio_threaded(audio_player.play_system_status, 'error')
+        return False
+
+def check_medication_schedules():
+    """Check all active medications and dispense if scheduled time matches"""
+    try:
+        current_time = get_current_gmt8_time()
+        
+        # Get all active medications from database
+        medication_cursor = mongo.db.medication_schedules.find({
+            'is_active': True
+        })
+        
+        dispensed_count = 0
+        
+        for medication in medication_cursor:
+            med_id = str(medication.get('_id', 'unknown'))
+            medication_name = medication.get('medication_name', 'Unknown')
+            
+            # Check cooldown period to prevent repeated dispensing
+            if med_id in last_dispensed_medications:
+                last_dispensed = last_dispensed_medications[med_id]
+                if (current_time.timestamp() - last_dispensed) < DISPENSE_COOLDOWN:
+                    continue  # Skip if within cooldown period
+            
+            # Check if medication should be dispensed now
+            if should_dispense_medication(medication):
+                # Determine which motor to use based on time
+                medication_times = medication.get('times', [])
+                current_time_matches = []
+                
+                for med_time in medication_times:
+                    if time_matches_schedule(med_time, current_time):
+                        current_time_matches.append(med_time)
+                
+                if current_time_matches:
+                    # Use the first matching time to determine AM/PM
+                    first_match_time = current_time_matches[0]
+                    use_stepper = is_am_time(first_match_time)
+                    
+                    print(f"📅 Time to dispense {medication_name} at {first_match_time} ({'AM - Stepper' if use_stepper else 'PM - Servo'})")
+                    
+                    # Play medication reminder first
+                    play_audio_threaded(audio_player.play_medication_alert, 'time_to_take')
+                    time.sleep(2)  # Brief pause between alerts
+                    
+                    if dispense_pill_automatically(medication, use_stepper):
+                        dispensed_count += 1
+        
+        if dispensed_count > 0:
+            print(f"💊 Auto-dispensed {dispensed_count} medication(s) at {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            
+    except Exception as e:
+        print(f"❌ Error checking medication schedules: {e}")
+
+def medication_monitor_loop():
+    """Background thread loop for monitoring medication schedules"""
+    global medication_monitoring_active
+    
+    print("🔄 Medication monitoring started")
+    
+    while medication_monitoring_active:
+        try:
+            current_time = get_current_gmt8_time()
+            print(f"🕒 Checking medications at {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            
+            check_medication_schedules()
+            
+            # Check every 60 seconds
+            time.sleep(60)
+            
+        except Exception as e:
+            print(f"❌ Error in medication monitor loop: {e}")
+            time.sleep(60)  # Continue monitoring even if there's an error
+    
+    print("⏹️ Medication monitoring stopped")
+
+def start_medication_monitoring():
+    """Start the medication monitoring background thread"""
+    global medication_monitoring_active, medication_monitor_thread
+    
+    if not medication_monitoring_active:
+        medication_monitoring_active = True
+        medication_monitor_thread = threading.Thread(target=medication_monitor_loop, daemon=True)
+        medication_monitor_thread.start()
+        print("✅ Medication monitoring thread started")
+    else:
+        print("⚠️ Medication monitoring already active")
+
+def stop_medication_monitoring():
+    """Stop the medication monitoring background thread"""
+    global medication_monitoring_active
+    
+    if medication_monitoring_active:
+        medication_monitoring_active = False
+        print("🛑 Medication monitoring stopped")
+    else:
+        print("⚠️ Medication monitoring not active")
+
+# ==================== END MEDICATION MONITORING SYSTEM ====================
+
 def generate_frames():
     """Generate video frames using optimized frame capture method"""
     import time
@@ -546,12 +815,16 @@ def get_audio_status():
 @app.route('/print-readings', methods=['POST'])
 def print_readings():
     try:
+        # Get sensor data from frontend (status card values)
+        sensor_data = request.get_json()
+        print(f"📊 Received sensor data from frontend: {sensor_data}")
+        
         # Try direct import first
         try:
             from print import print_current_readings
             
-            # Call the print function directly - it will always use live MQTT data
-            result = print_current_readings()
+            # Call the print function with the status card values from frontend
+            result = print_current_readings(sensor_data)
             
             if result['success']:
                 return jsonify({
@@ -578,7 +851,7 @@ def print_readings():
                             print("✓ Printer reset successful, retrying print...")
                             # Wait a moment then retry
                             time.sleep(3)
-                            result = print_current_readings()
+                            result = print_current_readings(sensor_data)
                             
                             if result['success']:
                                 return jsonify({
@@ -1009,6 +1282,127 @@ def get_user_medications(user_id):
             'message': 'Error fetching medications'
         }), 500
 
+# ==================== MEDICATION MONITORING API ENDPOINTS ====================
+
+@app.route('/api/medication-monitoring/start', methods=['POST'])
+def start_monitoring():
+    """Start automatic medication monitoring"""
+    try:
+        start_medication_monitoring()
+        return jsonify({
+            'success': True,
+            'message': 'Medication monitoring started',
+            'status': 'active'
+        })
+    except Exception as e:
+        print(f"Error starting medication monitoring: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error starting monitoring: {str(e)}'
+        }), 500
+
+@app.route('/api/medication-monitoring/stop', methods=['POST'])
+def stop_monitoring():
+    """Stop automatic medication monitoring"""
+    try:
+        stop_medication_monitoring()
+        return jsonify({
+            'success': True,
+            'message': 'Medication monitoring stopped',
+            'status': 'inactive'
+        })
+    except Exception as e:
+        print(f"Error stopping medication monitoring: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error stopping monitoring: {str(e)}'
+        }), 500
+
+@app.route('/api/medication-monitoring/status', methods=['GET'])
+def get_monitoring_status():
+    """Get current medication monitoring status"""
+    global medication_monitoring_active, last_dispensed_medications
+    
+    try:
+        current_time = get_current_gmt8_time()
+        
+        return jsonify({
+            'success': True,
+            'active': medication_monitoring_active,
+            'current_time_gmt8': current_time.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'last_dispensed_count': len(last_dispensed_medications),
+            'cooldown_seconds': DISPENSE_COOLDOWN
+        })
+    except Exception as e:
+        print(f"Error getting monitoring status: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error getting status: {str(e)}'
+        }), 500
+
+@app.route('/api/medication-monitoring/check-now', methods=['POST'])
+def check_medications_now():
+    """Manually trigger medication schedule check"""
+    try:
+        current_time = get_current_gmt8_time()
+        print(f"🔍 Manual medication check triggered at {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        
+        check_medication_schedules()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Medication check completed',
+            'checked_at': current_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+        })
+    except Exception as e:
+        print(f"Error in manual medication check: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error checking medications: {str(e)}'
+        }), 500
+
+@app.route('/api/medication-monitoring/test-dispense', methods=['POST'])
+def test_dispense():
+    """Test pill dispensing system"""
+    try:
+        data = request.get_json()
+        motor_type = data.get('motor', 'stepper')  # 'stepper' or 'servo'
+        
+        if motor_type == 'stepper':
+            # Test stepper motor
+            command = {'steps': 50, 'direction': 'CW'}
+            mqtt_client.publish(TOPICS['stepper'], json.dumps(command))
+            play_audio_threaded(audio_player.play_user_interaction, 'press_button')
+            message = "Test stepper dispensing completed"
+        else:
+            # Test servo motor
+            mqtt_client.publish(TOPICS['servo'], str(90))
+            play_audio_threaded(audio_player.play_user_interaction, 'press_button')
+            
+            # Return servo to 0° after 3 seconds
+            def return_servo():
+                time.sleep(3)
+                mqtt_client.publish(TOPICS['servo'], str(0))
+                
+            servo_thread = threading.Thread(target=return_servo, daemon=True)
+            servo_thread.start()
+            message = "Test servo dispensing completed"
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'motor_used': motor_type
+        })
+        
+    except Exception as e:
+        print(f"Error in test dispense: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error testing dispense: {str(e)}'
+        }), 500
+
+# ==================== END MEDICATION MONITORING API ENDPOINTS ====================
+
     
 @app.route("/api/facial-recognition/authenticate", methods=['POST'])
 def facial_recognition_authenticate():
@@ -1092,6 +1486,10 @@ if __name__ == "__main__":
     mqtt_thread = threading.Thread(target=start_mqtt)
     mqtt_thread.daemon = True
     mqtt_thread.start()
+    
+    # Start medication monitoring in a separate thread
+    print("💊 Starting Medication Monitoring System...")
+    start_medication_monitoring()
     
     # Play startup sound
     print("🎵 Starting BotiBot Web Server...")
