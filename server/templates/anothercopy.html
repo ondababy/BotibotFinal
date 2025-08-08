@@ -2045,12 +2045,8 @@
       }
 
       function dispensePillPrecisionMode() {
-        const stepsElement = document.getElementById("stepper-steps");
-        const directionElement = document.getElementById("stepper-direction");
-        
-        // Use default values if elements are not accessible (e.g., when controls are hidden)
-        const steps = stepsElement && stepsElement.value ? stepsElement.value : "1000";
-        const direction = directionElement && directionElement.value ? directionElement.value : "CW";
+        const steps = document.getElementById("stepper-steps").value;
+        const direction = document.getElementById("stepper-direction").value;
 
         showNotification("🔄 Dispensing pill with precision mode...", "info");
 

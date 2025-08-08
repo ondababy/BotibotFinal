@@ -74,7 +74,31 @@ def get_alcohol_description(alcohol_level):
         return "Unknown"
 
 def initialize_printer():
-    """Try different printer initialization methods"""
+    """Try different printer initialization methods with resource busy handling"""
+    import subprocess
+    import time
+    
+    # First, try to reset USB device if it's busy
+    def reset_usb_device():
+        try:
+            print("🔄 Attempting to reset USB printer device...")
+            # Try to reset the USB device
+            result = subprocess.run(['sudo', 'usb_modeswitch', '-v', hex(VENDOR_ID), '-p', hex(PRODUCT_ID), '-R'], 
+                                  capture_output=True, text=True, timeout=5)
+            time.sleep(2)  # Wait for reset
+            return True
+        except:
+            try:
+                # Alternative: try to unbind and rebind the device
+                subprocess.run(['sudo', 'bash', '-c', 'echo "1-1:1.0" > /sys/bus/usb/drivers/usblp/unbind'], 
+                             capture_output=True, text=True, timeout=3)
+                time.sleep(1)
+                subprocess.run(['sudo', 'bash', '-c', 'echo "1-1:1.0" > /sys/bus/usb/drivers/usblp/bind'], 
+                             capture_output=True, text=True, timeout=3)
+                time.sleep(2)
+                return True
+            except:
+                return False
     
     # Method 1: Try with correct endpoints FIRST (based on lsusb output)
     endpoint_configs = [
@@ -86,13 +110,31 @@ def initialize_printer():
         (0x83, 0x03),  # Alternative 4
     ]
     
+    # First attempt without reset
     for in_ep, out_ep in endpoint_configs:
         try:
             printer = Usb(VENDOR_ID, PRODUCT_ID, in_ep=in_ep, out_ep=out_ep, timeout=0)
             print(f"✓ Printer initialized with endpoints: in=0x{in_ep:02x}, out=0x{out_ep:02x}")
             return printer
         except Exception as e:
-            print(f"Failed with in_ep=0x{in_ep:02x}, out_ep=0x{out_ep:02x}: {e}")
+            if "Resource busy" in str(e) or "errno 16" in str(e):
+                print(f"⚠️ Printer busy with endpoints in=0x{in_ep:02x}, out=0x{out_ep:02x}")
+                continue
+            else:
+                print(f"Failed with in_ep=0x{in_ep:02x}, out_ep=0x{out_ep:02x}: {e}")
+    
+    # If all attempts failed with "Resource busy", try to reset and try again
+    print("🔄 All initial attempts failed, trying USB reset...")
+    reset_usb_device()
+    
+    # Second attempt after reset
+    for in_ep, out_ep in endpoint_configs:
+        try:
+            printer = Usb(VENDOR_ID, PRODUCT_ID, in_ep=in_ep, out_ep=out_ep, timeout=0)
+            print(f"✓ Printer initialized after reset with endpoints: in=0x{in_ep:02x}, out=0x{out_ep:02x}")
+            return printer
+        except Exception as e:
+            print(f"Failed after reset with in_ep=0x{in_ep:02x}, out_ep=0x{out_ep:02x}: {e}")
     
     # Method 2: Try with auto-detection as fallback
     try:
@@ -101,6 +143,15 @@ def initialize_printer():
         return printer
     except Exception as e:
         print(f"Auto-detection failed: {e}")
+        if "Resource busy" in str(e):
+            print("🔄 Auto-detection failed due to busy resource, trying after delay...")
+            time.sleep(3)
+            try:
+                printer = Usb(VENDOR_ID, PRODUCT_ID, timeout=0)
+                print("✓ Printer initialized with auto-detection after delay")
+                return printer
+            except Exception as e2:
+                print(f"Auto-detection failed again: {e2}")
     
     # Method 3: Try with interface specification
     try:
@@ -157,85 +208,36 @@ def print_current_readings(sensor_data=None):
                 'message': 'Printer not available or failed to initialize'
             }
         
-        # Extract sensor values with fallbacks
-        # Use the same format as the web interface sends
-        temp = sensor_data.get('temp', {}).get('value', 'N/A')
-        distance = sensor_data.get('distance', {}).get('value', 'N/A')
-        weight = sensor_data.get('weight_value', {}).get('value', 'N/A')
-        bpm = sensor_data.get('bpm', {}).get('value', 'N/A')
-        alcohol = sensor_data.get('alcohol', {}).get('value', 'N/A')
+        # Extract values as displayed in status cards
+        temp = sensor_data.get('temp', {}).get('value', None)
+        bpm = sensor_data.get('bpm', {}).get('value', None)
+        alcohol = sensor_data.get('alcohol', {}).get('value', None)
+        weight = sensor_data.get('weight_value', {}).get('value', None)
+        distance = sensor_data.get('distance', {}).get('value', None)
         
-        # Get timestamps
-        temp_time = sensor_data.get('temp', {}).get('timestamp', 'N/A')
-        distance_time = sensor_data.get('distance', {}).get('timestamp', 'N/A')
-        weight_time = sensor_data.get('weight_value', {}).get('timestamp', 'N/A')
-        bpm_time = sensor_data.get('bpm', {}).get('timestamp', 'N/A')
-        alcohol_time = sensor_data.get('alcohol', {}).get('timestamp', 'N/A')
+        # Format values for printing (match dashboard)
+        def fmt(val, decimals=2, default='--'):
+            try:
+                if val is None:
+                    return default
+                val = float(val)
+                if decimals == 0:
+                    return str(int(round(val)))
+                return f"{val:.{decimals}f}"
+            except Exception:
+                return default
         
-        # Format current time
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Build print text
         print_text = "BOTIBOT HEALTH REPORT\n"
         print_text += "=" * 32 + "\n"
-        print_text += f"Generated: {current_time}\n"
+        print_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         print_text += "=" * 32 + "\n\n"
-        
-        print_text += "SENSOR READINGS:\n"
+        print_text += "SENSOR STATUS CARD VALUES:\n"
         print_text += "-" * 32 + "\n"
-        
-        # Temperature
-        if temp != 'N/A' and temp != 0:
-            print_text += f"Temperature: {temp} °C\n"
-            if temp_time != 'N/A':
-                time_str = temp_time.split('T')[1][:8] if 'T' in str(temp_time) else str(temp_time)[:8]
-                print_text += f"  Time: {time_str}\n"
-        else:
-            print_text += "Temperature: No data\n"
-        
-        # Distance/Height  
-        if distance != 'N/A' and distance != 0:
-            print_text += f"Distance: {distance} mm\n"
-            if distance_time != 'N/A':
-                time_str = distance_time.split('T')[1][:8] if 'T' in str(distance_time) else str(distance_time)[:8]
-                print_text += f"  Time: {time_str}\n"
-        else:
-            print_text += "Distance: No data\n"
-        
-        # Weight
-        if weight != 'N/A' and weight != 0:
-            print_text += f"Weight: {weight} g\n"
-            if weight_time != 'N/A':
-                time_str = weight_time.split('T')[1][:8] if 'T' in str(weight_time) else str(weight_time)[:8]
-                print_text += f"  Time: {time_str}\n"
-        else:
-            print_text += "Weight: No data\n"
-        
-        # Heart Rate
-        if bpm != 'N/A' and bpm > 0:
-            print_text += f"Heart Rate: {bpm} BPM\n"
-            if bpm_time != 'N/A':
-                time_str = bpm_time.split('T')[1][:8] if 'T' in str(bpm_time) else str(bpm_time)[:8]
-                print_text += f"  Time: {time_str}\n"
-        else:
-            print_text += "Heart Rate: No data\n"
-        
-        # Alcohol Level with description
-        if alcohol != 'N/A' and alcohol != 0:
-            try:
-                alcohol_float = float(alcohol)
-                alcohol_desc = get_alcohol_description(alcohol_float)
-                print_text += f"Alcohol Level: {alcohol_float:.2f}\n"
-                print_text += f"Status: {alcohol_desc}\n"
-            except (ValueError, TypeError):
-                print_text += f"Alcohol Level: {alcohol}\n"
-                print_text += f"Status: Unknown\n"
-            if alcohol_time != 'N/A':
-                time_str = alcohol_time.split('T')[1][:8] if 'T' in str(alcohol_time) else str(alcohol_time)[:8]
-                print_text += f"  Time: {time_str}\n"
-        else:
-            print_text += "Alcohol Level: No data\n"
-        
+        print_text += f"Temperature: {fmt(temp, 2)} °C\n"
+        print_text += f"Heart Rate: {fmt(bpm, 0)} BPM\n"
+        print_text += f"Alcohol Level: {fmt(alcohol, 2)}\n"
+        print_text += f"Weight: {fmt(weight, 2)} kg\n"
+        print_text += f"Distance: {fmt(distance, 2)} cm\n"
         print_text += "\n" + "=" * 32 + "\n"
         print_text += "BOTIBOT Health Monitor\n"
         print_text += "www.botibot.com\n"
@@ -245,19 +247,184 @@ def print_current_readings(sensor_data=None):
         print("Printing health report...")
         print(f"Print content:\n{print_text}")
         
-        printer.text(print_text)
-        printer.cut()
-        
-        print("✓ Print successful")
-        
-        return {
-            'success': True,
-            'message': 'Health report printed successfully',
-            'printed_at': current_time
-        }
+        try:
+            printer.text(print_text)
+            printer.cut()
+            print("✓ Print successful")
+            
+            # Properly close the printer connection
+            try:
+                printer.close()
+                print("✓ Printer connection closed")
+            except:
+                pass  # Ignore close errors
+            
+            return {
+                'success': True,
+                'message': 'Health report printed successfully',
+                'printed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+        except Exception as print_error:
+            # If printing fails, try to close connection anyway
+            try:
+                printer.close()
+            except:
+                pass
+            raise print_error
         
     except Exception as e:
         error_msg = f"Print error: {str(e)}"
+        print(f"❌ {error_msg}")
+        
+        # Additional troubleshooting info for resource busy errors
+        if "Resource busy" in str(e) or "errno 16" in str(e):
+            error_msg += "\n💡 Printer troubleshooting:"
+            error_msg += "\n  • Another process may be using the printer"
+            error_msg += "\n  • Try waiting a few seconds and try again"
+            error_msg += "\n  • Check if any other print jobs are running"
+            error_msg += "\n  • Restart the application if problem persists"
+        
+        return {
+            'success': False,
+            'message': error_msg
+        }
+
+def print_medication_schedule(user_id, medications_data=None):
+    """
+    Print medication schedule to thermal printer
+    
+    Args:
+        user_id (str): User ID for the medication schedule
+        medications_data (list): List of medication data.
+                                If None, will fetch from database.
+        
+    Returns:
+        dict: Result of print operation with success status and message
+    """
+    try:
+        # Initialize printer for this print job
+        printer = initialize_printer()
+        
+        if not printer:
+            return {
+                'success': False,
+                'message': 'Printer not available or failed to initialize'
+            }
+        
+        # If no medication data provided, we'll use what's passed from the endpoint
+        if medications_data is None:
+            medications_data = []
+        
+        # Get user name from session storage (if available)
+        user_name = "Patient"  # Default fallback
+        
+        # Format days helper
+        day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        
+        # Start building print content
+        print_text = "BOTIBOT MEDICATION SCHEDULE\n"
+        print_text += "=" * 32 + "\n"
+        print_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        print_text += f"Patient: {user_name}\n"
+        print_text += "=" * 32 + "\n\n"
+        
+        if not medications_data or len(medications_data) == 0:
+            print_text += "No active medications found.\n"
+            print_text += "\nPlease add medications to\n"
+            print_text += "your schedule through the\n"
+            print_text += "BOTIBOT dashboard.\n"
+        else:
+            print_text += f"ACTIVE MEDICATIONS ({len(medications_data)}):\n"
+            print_text += "-" * 32 + "\n"
+            
+            for i, med in enumerate(medications_data, 1):
+                print_text += f"{i}. {med.get('medication_name', 'Unknown')}\n"
+                print_text += f"   Dosage: {med.get('dosage', 'Not specified')}\n"
+                
+                # Format times
+                times = med.get('times', [])
+                if times:
+                    formatted_times = []
+                    for time_str in times:
+                        try:
+                            # Parse time and convert to 12-hour format
+                            hour, minute = map(int, time_str.split(':'))
+                            period = 'AM' if hour < 12 else 'PM'
+                            display_hour = hour if hour <= 12 else hour - 12
+                            if display_hour == 0:
+                                display_hour = 12
+                            formatted_times.append(f"{display_hour}:{minute:02d}{period}")
+                        except:
+                            formatted_times.append(time_str)
+                    
+                    print_text += f"   Times: {', '.join(formatted_times)}\n"
+                
+                # Format frequency and days
+                frequency = med.get('frequency', 'daily')
+                if frequency == 'specific_days':
+                    days_of_week = med.get('days_of_week', [])
+                    active_days = [day_names[day] for day in days_of_week if 0 <= day < 7]
+                    if active_days:
+                        print_text += f"   Days: {', '.join(active_days)}\n"
+                else:
+                    print_text += f"   Frequency: Daily\n"
+                
+                # Add dates if available
+                start_date = med.get('start_date')
+                end_date = med.get('end_date')
+                if start_date:
+                    try:
+                        start_formatted = datetime.fromisoformat(start_date.replace('Z', '+00:00')).strftime('%m/%d/%Y')
+                        print_text += f"   Start: {start_formatted}\n"
+                    except:
+                        print_text += f"   Start: {start_date}\n"
+                
+                if end_date:
+                    try:
+                        end_formatted = datetime.fromisoformat(end_date.replace('Z', '+00:00')).strftime('%m/%d/%Y')
+                        print_text += f"   End: {end_formatted}\n"
+                    except:
+                        print_text += f"   End: {end_date}\n"
+                
+                # Add reminder status
+                if med.get('reminder_enabled', False):
+                    print_text += f"   Reminders: ON\n"
+                
+                # Add notes if available
+                notes = med.get('notes', '').strip()
+                if notes:
+                    # Limit notes length for printing
+                    if len(notes) > 50:
+                        notes = notes[:47] + "..."
+                    print_text += f"   Notes: {notes}\n"
+                
+                print_text += "\n"  # Space between medications
+        
+        print_text += "=" * 32 + "\n"
+        print_text += "BOTIBOT Health Monitor\n"
+        print_text += "Stay on track with your\n"
+        print_text += "medication schedule!\n"
+        print_text += "=" * 32 + "\n"
+        
+        # Print to thermal printer
+        print("Printing medication schedule...")
+        print(f"Print content:\n{print_text}")
+        
+        printer.text(print_text)
+        printer.cut()
+        
+        print("✓ Schedule print successful")
+        
+        return {
+            'success': True,
+            'message': 'Medication schedule printed successfully',
+            'printed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'medication_count': len(medications_data)
+        }
+        
+    except Exception as e:
+        error_msg = f"Schedule print error: {str(e)}"
         print(f"❌ {error_msg}")
         return {
             'success': False,

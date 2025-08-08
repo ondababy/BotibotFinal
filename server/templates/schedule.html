@@ -802,6 +802,94 @@
             window.print();
         }
 
+        function printSchedule() {
+            const userId = getUserId();
+            if (!userId) {
+                showError('User ID not found. Please verify your PIN again.');
+                return;
+            }
+
+            // Show loading indicator
+            const printBtn = document.querySelector('button[onclick="printSchedule()"]');
+            const originalText = printBtn.innerHTML;
+            printBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Printing...';
+            printBtn.disabled = true;
+
+            fetch('/print-schedule', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: userId
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('Medication schedule printed successfully!', 'success');
+                    console.log('✅ Schedule printed:', data);
+                } else {
+                    showNotification('Error printing schedule: ' + data.message, 'danger');
+                    console.error('❌ Print error:', data.message);
+                }
+            })
+            .catch(error => {
+                showNotification('Network error: ' + error.message, 'danger');
+                console.error('❌ Network error:', error);
+            })
+            .finally(() => {
+                // Restore button state
+                printBtn.innerHTML = originalText;
+                printBtn.disabled = false;
+            });
+        }
+
+        function showNotification(message, type) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = `alert alert-${type} position-fixed`;
+            notification.style.cssText = `
+                top: 20px;
+                right: 20px;
+                z-index: 9999;
+                max-width: 400px;
+                border-radius: 15px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                backdrop-filter: blur(20px);
+            `;
+            notification.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+                    <span>${message}</span>
+                    <button type="button" class="btn-close ms-auto" onclick="this.parentElement.parentElement.remove()"></button>
+                </div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 5000);
+        }
+
+        function showDispenseOptions() {
+            // Redirect to main dashboard for pill dispensing
+            const userData = sessionStorage.getItem('user_data');
+            const accessToken = sessionStorage.getItem('access_token');
+            
+            if (userData && accessToken) {
+                console.log('🔐 User authenticated, redirecting to dashboard for dispensing...');
+                window.location.href = '/?authenticated=true';
+            } else {
+                console.log('⚠️ No authentication found, redirecting to main page...');
+                window.location.href = '/';
+            }
+        }
+
         function goBackToHome() {
             const userData = sessionStorage.getItem('user_data');
             const accessToken = sessionStorage.getItem('access_token');

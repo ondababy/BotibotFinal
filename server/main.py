@@ -561,7 +561,37 @@ def print_readings():
                     'method': 'direct_live_mqtt'
                 }), 200
             else:
-                # If direct method fails, try subprocess method
+                # If direct method fails with resource busy, try to reset printer
+                if "Resource busy" in result['message'] or "errno 16" in result['message']:
+                    print("🔄 Printer resource busy, attempting reset...")
+                    try:
+                        # Try to reset the printer
+                        reset_result = subprocess.run(
+                            ['python3', 'reset_printer.py'],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            cwd='/home/bsit/BotibotFInal/server'
+                        )
+                        
+                        if reset_result.returncode == 0:
+                            print("✓ Printer reset successful, retrying print...")
+                            # Wait a moment then retry
+                            time.sleep(3)
+                            result = print_current_readings()
+                            
+                            if result['success']:
+                                return jsonify({
+                                    'success': True,
+                                    'message': result['message'] + ' (after printer reset)',
+                                    'printed_at': result.get('printed_at', datetime.now().isoformat()),
+                                    'method': 'direct_after_reset'
+                                }), 200
+                        
+                    except Exception as reset_error:
+                        print(f"⚠️ Printer reset failed: {reset_error}")
+                
+                # If still failing, try subprocess method
                 raise Exception(result['message'])
                 
         except Exception as direct_error:
@@ -622,6 +652,121 @@ def print_readings():
             'success': False,
             'message': 'Failed to execute print job',
             'error': str(e)
+        }), 500
+
+@app.route('/reset-printer', methods=['POST'])
+def reset_printer():
+    """Manually reset the thermal printer when it gets stuck"""
+    try:
+        print("🔄 Manual printer reset requested...")
+        
+        # Execute the reset script
+        result = subprocess.run(
+            ['python3', 'reset_printer.py'],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd='/home/bsit/BotibotFInal/server'
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Printer reset successfully completed',
+                'output': result.stdout
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Printer reset failed',
+                'error': result.stderr
+            }), 500
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'message': 'Printer reset timed out'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to reset printer: {str(e)}'
+        }), 500
+
+@app.route('/print-schedule', methods=['POST'])
+def print_schedule():
+    """Print medication schedule for a specific user"""
+    try:
+        # Get request data
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+        
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({
+                'success': False,
+                'message': 'User ID is required'
+            }), 400
+        
+        # Validate user_id format
+        if not ObjectId.is_valid(user_id):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid user ID format'
+            }), 400
+        
+        # Fetch medications for the user
+        print(f"🖨️ Fetching medications for print - user_id: {user_id}")
+        medication_cursor = mongo.db.medication_schedules.find({
+            'user_id': ObjectId(user_id),
+            'is_active': True
+        }).sort('created_at', -1)
+        
+        medications = []
+        for med in medication_cursor:
+            # Convert ObjectId to string for processing
+            med['_id'] = str(med['_id'])
+            med['user_id'] = str(med['user_id'])
+            
+            # Convert dates to ISO format if they exist
+            if 'created_at' in med and med['created_at']:
+                med['created_at'] = med['created_at'].isoformat() if hasattr(med['created_at'], 'isoformat') else str(med['created_at'])
+            if 'updated_at' in med and med['updated_at']:
+                med['updated_at'] = med['updated_at'].isoformat() if hasattr(med['updated_at'], 'isoformat') else str(med['updated_at'])
+            
+            medications.append(med)
+        
+        print(f"💊 Found {len(medications)} medications for printing")
+        
+        # Import print function here to avoid circular imports
+        from print import print_medication_schedule
+        
+        # Call print function
+        result = print_medication_schedule(user_id, medications)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'printed_at': result['printed_at'],
+                'medication_count': result['medication_count']
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Print schedule error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to print schedule: {str(e)}'
         }), 500
 
 @app.route("/api/camera/feed")
